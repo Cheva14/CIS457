@@ -5,63 +5,290 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <stdlib.h>
+#include <stdbool.h>
 
+#define SIZE 20 // How many clients can join
+
+struct DataItem
+{
+  int key;
+  char username[16];
+  bool admin;
+};
+
+struct DataItem *hashArray[SIZE];
+struct DataItem *dummyItem;
+struct DataItem *item;
+
+int hashCode(int key)
+{
+  return key % SIZE;
+}
+
+struct DataItem *search(int key)
+{
+  // get the hash
+  int hashIndex = hashCode(key);
+
+  // move in array until an empty
+  while (hashArray[hashIndex] != NULL)
+  {
+
+    if (hashArray[hashIndex]->key == key)
+      return hashArray[hashIndex];
+
+    // go to next cell
+    ++hashIndex;
+
+    // wrap around the table
+    hashIndex %= SIZE;
+  }
+
+  return NULL;
+}
+
+int getKey(char username[16])
+{
+  int i = 0;
+
+  for (i = 0; i < SIZE; i++)
+  {
+
+    if (hashArray[i] != NULL)
+    {
+      if (!strcmp(hashArray[i]->username, username))
+      {
+        return hashArray[i]->key;
+      }
+    }
+  }
+  return -1;
+}
+
+bool userExist(char *list, char username[16])
+{
+  if (strstr(list, username))
+    return true;
+  return false;
+}
+
+void insert(int key, char username[16])
+{
+  struct DataItem *item = (struct DataItem *)malloc(sizeof(struct DataItem));
+  strcpy(item->username, username);
+  item->key = key;
+  item->admin = false;
+
+  // get the hash
+  int hashIndex = hashCode(key);
+
+  // move in array until an empty or deleted cell
+  while (hashArray[hashIndex] != NULL && hashArray[hashIndex]->key != -1)
+  {
+    // go to next cell
+    ++hashIndex;
+
+    // wrap around the table
+    hashIndex %= SIZE;
+  }
+
+  hashArray[hashIndex] = item;
+}
+
+struct DataItem *delete (struct DataItem *item)
+{
+  int key = item->key;
+
+  // get the hash
+  int hashIndex = hashCode(key);
+
+  // move in array until an empty
+  while (hashArray[hashIndex] != NULL)
+  {
+
+    if (hashArray[hashIndex]->key == key)
+    {
+      struct DataItem *temp = hashArray[hashIndex];
+
+      // assign a dummy item at deleted position
+      hashArray[hashIndex] = dummyItem;
+      return temp;
+    }
+
+    // go to next cell
+    ++hashIndex;
+
+    // wrap around the table
+    hashIndex %= SIZE;
+  }
+
+  return NULL;
+}
+
+void display()
+{
+  int i = 0;
+
+  for (i = 0; i < SIZE; i++)
+  {
+
+    if (hashArray[i] != NULL)
+      printf("(%d,%s)\n", hashArray[i]->key, hashArray[i]->username);
+  }
+
+  printf("\n");
+}
+
+char *getUsers()
+{
+  char *result = "";
+  int i = 0;
+
+  for (i = 0; i < SIZE; i++)
+  {
+
+    if (hashArray[i] != NULL)
+    {
+      if (!strcmp(result, ""))
+      {
+        char *tempstr = hashArray[i]->username;
+        int newSize = strlen(tempstr) + strlen(result) + 1;
+        char *newBuffer = (char *)malloc(newSize);
+        strcpy(newBuffer, result);
+        strcat(newBuffer, tempstr);
+        result = newBuffer;
+      }
+      else
+      {
+        char *tempstr = hashArray[i]->username;
+        char *divider = ", ";
+        int newSize = strlen(tempstr) + strlen(divider) + strlen(result) + 1;
+        char *newBuffer = (char *)malloc(newSize);
+        strcpy(newBuffer, result);
+        strcat(newBuffer, divider);
+        strcat(newBuffer, tempstr);
+        result = newBuffer;
+      }
+    }
+  }
+
+  return result;
+}
 
 int main(int argc, char **argv)
 {
   int sockfd = socket(AF_INET, SOCK_STREAM, 0);
+  if (sockfd < 0)
+  {
+    printf("Error in socket creation");
+    return 1;
+  }
 
   fd_set sockets;
   FD_ZERO(&sockets);
   FD_SET(sockfd, &sockets);
-
   short port;
 
-  if( argc == 2 ) {
+  if (argc == 2)
+  {
     port = atoi(argv[1]);
-   }
-   else {
+  }
+  else
+  {
     printf("usage: ./client <port>\n");
     return 0;
-   }
-
+  }
 
   struct sockaddr_in serveraddr, clientaddr;
   serveraddr.sin_family = AF_INET;
   serveraddr.sin_port = htons(port);
   serveraddr.sin_addr.s_addr = INADDR_ANY;
 
-  int n = bind(sockfd, (struct sockaddr *)&serveraddr, sizeof(serveraddr));
+  bind(sockfd, (struct sockaddr *)&serveraddr, sizeof(serveraddr));
   listen(sockfd, 10);
 
   while (1)
   {
     fd_set tmpset = sockets;
-    int r = select(FD_SETSIZE, &tmpset, NULL, NULL, NULL);
+    select(FD_SETSIZE, &tmpset, NULL, NULL, NULL);
     if (FD_ISSET(sockfd, &tmpset))
     {
-
       socklen_t len = sizeof(struct sockaddr_in);
-      int clientsocket = accept(sockfd, (struct socckaddr *)&clientaddr, &len);
+      int clientsocket = accept(sockfd, (struct sockaddr *)&clientaddr, &len);
       FD_SET(clientsocket, &sockets);
     }
     for (int i = 0; i < FD_SETSIZE; i++)
     {
       if (FD_ISSET(i, &tmpset) && i != sockfd)
       {
-        char line[5000];
-        char test[5000] = "adios";
-        recv(i, line, 5000, 0);
-        printf("Got from client #%d: %s\n", i, line);
-
-
-        if (send(i, line, sizeof(line), 0) == -1)
+        char data[5000];
+        recv(i, data, 5000, 0);
+        if (data[0] == '/') // is a command
         {
-          printf("Error in sending file.");
-          return (0);
+          if (!strcmp(data, "/quit")) // quit command
+          {
+            item = search(i);
+            printf("%s has left the server.\n", item->username);
+            delete (item);
+            FD_CLR(i, &sockets);
+            close(i);
+          }
+          else if (!strcmp(data, "/list")) // list command
+          {
+            char *list = getUsers();
+            send(i, list, strlen(list) + 1, 0);
+          }
+          else if (!strncmp(data, "/msg ", 5)) // list command
+          {
+            int spaceAt;
+            char userTarget[16]; // at data[5] to data[spaceAt]
+            int keyTarget;
+            char msg[5000];
+            for (int k = 5; k < strlen(data); k++)
+            {
+              if (data[k] == ' ')
+              {
+                spaceAt = k;
+                break;
+              }
+            }
+            strncpy(userTarget, &data[5], spaceAt - 5);
+            strcpy(msg, &data[spaceAt + 1]);
+            if (userExist(getUsers(), userTarget)) // user in list
+            {
+              keyTarget = getKey(userTarget);
+              send(keyTarget, msg, 5000, 0);
+            }
+          }
+          else if (!strncmp(data, "/all ", 5)) // list command
+          {
+            char msg[5000]; // at data[5] to end
+            strcpy(msg, &data[5]);
+
+            // send(all, msg, 5000, 0);
+            int k = 0;
+
+            for (k = 0; k < SIZE; k++)
+            {
+              if (hashArray[k] != NULL)
+              {
+                int tempKey = hashArray[k]->key;
+                if (tempKey != i)
+                  send(tempKey, msg, 5000, 0);
+              }
+            }
+          }
+          else
+          {
+            printf("Got from %d client: %s\n", i, data);
+            send(4, data, strlen(data) + 1, 0);
+          }
         }
-        FD_CLR(i, &sockets);
-        close(i);
+        else // is a username
+        {
+          printf("%s has joined the server.\n", data);
+          insert(i, data);
+        }
       }
     }
   }
