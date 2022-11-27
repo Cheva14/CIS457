@@ -4,6 +4,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <unistd.h>
+#include <termios.h>
 #include <stdlib.h>
 
 int main(int argc, char **argv)
@@ -83,12 +84,22 @@ int main(int argc, char **argv)
     {
       send(sockfd, command, strlen(command) + 1, 0);
       printf("Disconnected.\n");
-      break;
+      close(sockfd);
+      return 0;
     }
     else if (!strcmp(command, "/r"))
     {
       printf("wait for messages\n");
       recv(sockfd, temp, 5000, 0);
+      temp[strcspn(temp, "\n")] = 0;
+
+      if (!strcmp(temp, "/quit"))
+      {
+        send(sockfd, temp, strlen(temp) + 1, 0);
+        printf("Disconnected.\n");
+        close(sockfd);
+        return 0;
+      }
       printf("Got from server: %s\n", temp);
     }
     else if (command[0] == '/')
@@ -96,10 +107,45 @@ int main(int argc, char **argv)
       send(sockfd, command, strlen(command) + 1, 0);
       if (!strcmp(command, "/list")) // list command
       {
-        char *list;
+        char list[5000];
         recv(sockfd, list, 5000, 0);
         printf("List of Users:\n");
         printf("%s\n", list);
+      }
+      else if (!strncmp(command, "/admin", 6))
+      {
+        char isAdmin[2];
+        recv(sockfd, isAdmin, 3, 0);
+        if (!strncmp(isAdmin, "ye", 2)) // user is admin
+        {
+          printf("You are an admin.\n");
+        }
+        else if (!strncmp(isAdmin, "no", 2)) // user is not admin
+        {
+          printf("Enter password: ");
+          struct termios term;
+          tcgetattr(fileno(stdin), &term);
+
+          term.c_lflag &= ~ECHO;
+          tcsetattr(fileno(stdin), 0, &term);
+
+          char password[5000];
+          fgets(password, 5000, stdin);
+
+          term.c_lflag |= ECHO;
+          tcsetattr(fileno(stdin), 0, &term);
+          password[strcspn(password, "\n")] = 0;
+          if (!strcmp(password, "1234567890"))
+          {
+            printf("password correct\n");
+            char tempcommand[] = "/makeadmin";
+            send(sockfd, tempcommand, strlen(tempcommand) + 1, 0);
+          }
+          else
+          {
+            printf("password incorrect\n");
+          }
+        }
       }
     }
     else

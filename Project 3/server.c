@@ -65,10 +65,26 @@ int getKey(char username[16])
   return -1;
 }
 
-bool userExist(char *list, char username[16])
+bool userExist(char *list, char username[])
 {
+  // list[strcspn(list, "\n")] = 0;
+  // username[strcspn(username, "\n")] = 0;
+
   if (strstr(list, username))
     return true;
+  return false;
+}
+
+bool isAdmin(int key)
+{
+
+  if (hashArray[key] != NULL)
+  {
+    if (hashArray[key]->admin)
+    {
+      return true;
+    }
+  }
   return false;
 }
 
@@ -93,6 +109,11 @@ void insert(int key, char username[16])
   }
 
   hashArray[hashIndex] = item;
+}
+
+void makeAdmin(int key)
+{
+  hashArray[key]->admin = true;
 }
 
 struct DataItem *delete (struct DataItem *item)
@@ -241,7 +262,7 @@ int main(int argc, char **argv)
           else if (!strncmp(data, "/msg ", 5)) // list command
           {
             int spaceAt;
-            char userTarget[16]; // at data[5] to data[spaceAt]
+            char userTarget[500];
             int keyTarget;
             char msg[5000];
             for (int k = 5; k < strlen(data); k++)
@@ -252,12 +273,25 @@ int main(int argc, char **argv)
                 break;
               }
             }
-            strncpy(userTarget, &data[5], spaceAt - 5);
-            strcpy(msg, &data[spaceAt + 1]);
-            if (userExist(getUsers(), userTarget)) // user in list
+            strcpy(userTarget, &data[5]);
+            for (int k = 0; k < strlen(userTarget); k++)
             {
-              keyTarget = getKey(userTarget);
+              if (userTarget[k] == ' ')
+              {
+                spaceAt = k;
+                break;
+              }
+            }
+            char *tempUser = strtok(userTarget, " ");
+            strcpy(msg, &userTarget[spaceAt + 1]);
+            if (userExist(getUsers(), tempUser)) // user in list
+            {
+              keyTarget = getKey(tempUser);
               send(keyTarget, msg, 5000, 0);
+            }
+            else
+            {
+              printf("User doesn't exist\n");
             }
           }
           else if (!strncmp(data, "/all ", 5)) // list command
@@ -278,10 +312,91 @@ int main(int argc, char **argv)
               }
             }
           }
+          else if (!strncmp(data, "/admin", 6))
+          {
+            if (hashArray[i]->admin) // is admin
+            {
+              send(i, "ye", 3, 0);
+            }
+            else // is not admin
+            {
+              send(i, "no", 3, 0);
+            }
+          }
+          else if (!strncmp(data, "/makeadmin", 10)) // set admin true for i
+          {
+            makeAdmin(i);
+          }
+
+          else if (!strncmp(data, "/kick ", 6))
+          {
+            if (hashArray[i]->admin) // user is admin
+            {
+              char userTarget[16]; // at data[6] to data[spaceAt]
+              int keyTarget;
+              strcpy(userTarget, &data[6]);
+              if (userExist(getUsers(), userTarget)) // user in list
+              {
+                printf("%s Disconnected.\n", userTarget);
+                keyTarget = getKey(userTarget);
+                send(keyTarget, "/quit", 6, 0);
+              }
+              else
+              {
+              }
+            }
+            else // user is not admin
+            {
+              // nothing
+            }
+          }
+          else if (!strncmp(data, "/rename ", 8))
+          {
+            if (hashArray[i]->admin) // user is admin
+            {
+              int spaceAt;
+              char userTarget[500];
+              int keyTarget;
+              char newUser[5000];
+              for (int k = 8; k < strlen(data); k++)
+              {
+                if (data[k] == ' ')
+                {
+                  spaceAt = k;
+                  break;
+                }
+              }
+              strcpy(userTarget, &data[8]);
+              for (int k = 0; k < strlen(userTarget); k++)
+              {
+                if (userTarget[k] == ' ')
+                {
+                  spaceAt = k;
+                  break;
+                }
+              }
+              printf("%d\n", spaceAt);
+              char *tempUser = strtok(userTarget, " ");
+              strcpy(newUser, &userTarget[spaceAt + 1]);
+              if (userExist(getUsers(), tempUser)) // user in list
+              {
+                keyTarget = getKey(tempUser);
+                printf("newUser (should be regina): $%s$\n", newUser);
+                strcpy(hashArray[keyTarget]->username, newUser);
+              }
+              else
+              {
+                printf("User doesn't exist\n");
+              }
+            }
+            else // user is not admin
+            {
+              // nothing
+            }
+          }
           else
           {
-            printf("Got from %d client: %s\n", i, data);
-            send(4, data, strlen(data) + 1, 0);
+            // printf("Got from %d client: %s\n", i, data);
           }
         }
         else // is a username
