@@ -15,6 +15,7 @@ int main(int argc, char **argv)
     printf("Error in socket creation");
     return 1;
   }
+
   char *ip;
   short port;
 
@@ -56,40 +57,60 @@ int main(int argc, char **argv)
       break;
     }
   }
-  char temp[5000];
+  fd_set sockets;
+  FD_ZERO(&sockets);
+  FD_SET(sockfd, &sockets);
+  FD_SET(fileno(stdin), &sockets);
 
+  // listen(sockfd, 10);
   while (1)
   {
-    printf("Enter command: ");
     char command[5000];
-    fgets(command, 5000, stdin);
-    command[strcspn(command, "\n")] = 0;
-    if (!strcmp(command, "/help"))
+    char temp[5000];
+    char isAdmin[2];
+
+    fd_set tmpset = sockets;
+
+    select(FD_SETSIZE, &tmpset, NULL, NULL, NULL);
+    if (FD_ISSET(fileno(stdin), &tmpset)) // got input from user
     {
-      printf("************************************************\n");
-      printf("Commands:\n");
-      printf("Get list of other users: /list\n");
-      printf("Send message to user: /msg <username> <message>\n");
-      printf("Send message to all users: /all <message>\n");
-      printf("Check for new messages received: /r");
-      printf("Disconnect from server: /quit\n");
-      printf("\n");
-      printf("Admin only:\n");
-      printf("Become an admin: /admin\n");
-      printf("Kick off user: /kick <username>\n");
-      printf("Rename user: /rename <username> <new username>\n");
-      printf("************************************************\n");
+      fgets(command, 5000, stdin);
+      // printf("fgets is: %d\n", prnt);
+      command[strcspn(command, "\n")] = 0;
+      if (!strcmp(command, "/help"))
+      {
+        printf("************************************************\n");
+        printf("Commands:\n");
+        printf("Get list of other users: /list\n");
+        printf("Send message to user: /msg <username> <message>\n");
+        printf("Send message to all users: /all <message>\n");
+        printf("Check for new messages received: /r");
+        printf("Disconnect from server: /quit\n");
+        printf("\n");
+        printf("Admin only:\n");
+        printf("Become an admin: /admin\n");
+        printf("Kick off user: /kick <username>\n");
+        printf("Rename user: /rename <username> <new username>\n");
+        printf("************************************************\n");
+      }
+      else if (!strcmp(command, "/quit"))
+      {
+        send(sockfd, command, strlen(command) + 1, 0);
+        printf("Disconnected.\n");
+        close(sockfd);
+        return 0;
+      }
+      else if (command[0] == '/')
+      {
+        send(sockfd, command, strlen(command) + 1, 0);
+      }
+      else
+      {
+        printf("Invalid command, try /help to get a list of commands.\n");
+      }
     }
-    else if (!strcmp(command, "/quit"))
+    if (FD_ISSET(sockfd, &tmpset)) // got data from server
     {
-      send(sockfd, command, strlen(command) + 1, 0);
-      printf("Disconnected.\n");
-      close(sockfd);
-      return 0;
-    }
-    else if (!strcmp(command, "/r"))
-    {
-      printf("wait for messages\n");
       recv(sockfd, temp, 5000, 0);
       temp[strcspn(temp, "\n")] = 0;
 
@@ -100,22 +121,18 @@ int main(int argc, char **argv)
         close(sockfd);
         return 0;
       }
-      printf("Got from server: %s\n", temp);
-    }
-    else if (command[0] == '/')
-    {
-      send(sockfd, command, strlen(command) + 1, 0);
-      if (!strcmp(command, "/list")) // list command
+      else if (!strncmp(temp, "Users", 5)) // list command
       {
-        char list[5000];
-        recv(sockfd, list, 5000, 0);
-        printf("List of Users:\n");
-        printf("%s\n", list);
+        printf("%s\n", temp);
       }
-      else if (!strncmp(command, "/admin", 6))
+      else if (!strncmp(temp, "Got a message from ", 19)) // list command
       {
-        char isAdmin[2];
-        recv(sockfd, isAdmin, 3, 0);
+        printf("%s\n", temp);
+      }
+      else if (!strncmp(temp, "admin: ", 7)) // recv(sockfd, isAdmin, 3, 0);
+      {
+        isAdmin[0] = temp[7];
+        isAdmin[1] = temp[8];
         if (!strncmp(isAdmin, "ye", 2)) // user is admin
         {
           printf("You are an admin.\n");
@@ -128,7 +145,6 @@ int main(int argc, char **argv)
 
           term.c_lflag &= ~ECHO;
           tcsetattr(fileno(stdin), 0, &term);
-
           char password[5000];
           fgets(password, 5000, stdin);
 
@@ -147,10 +163,10 @@ int main(int argc, char **argv)
           }
         }
       }
-    }
-    else
-    {
-      printf("Invalid command, try /help to get a list of commands.\n");
+      else
+      {
+        printf("%s\n", temp);
+      }
     }
   }
   close(sockfd);

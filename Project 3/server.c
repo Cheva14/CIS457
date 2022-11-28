@@ -163,15 +163,21 @@ void display()
 char *getUsers()
 {
   char *result = "";
-  int i = 0;
 
-  for (i = 0; i < SIZE; i++)
+  for (int i = 0; i < SIZE; i++)
   {
 
     if (hashArray[i] != NULL)
     {
       if (!strcmp(result, ""))
       {
+        char *startStr = "Users Connected: ";
+        int firstSize = strlen(startStr) + strlen(result) + 1;
+        char *firstBuffer = (char *)malloc(firstSize);
+        strcpy(firstBuffer, result);
+        strcat(firstBuffer, startStr);
+        result = firstBuffer;
+
         char *tempstr = hashArray[i]->username;
         int newSize = strlen(tempstr) + strlen(result) + 1;
         char *newBuffer = (char *)malloc(newSize);
@@ -192,6 +198,30 @@ char *getUsers()
       }
     }
   }
+
+  return result;
+}
+char *appendmsg(char *msg, int key)
+{
+  char *user = hashArray[key]->username;
+  char *result = "Got a message from ";
+  int firstSize = strlen(user) + strlen(result) + 1;
+  char *firstBuffer = (char *)malloc(firstSize);
+  strcpy(firstBuffer, result);
+  strcat(firstBuffer, user);
+  result = firstBuffer;
+
+  firstSize = strlen(": ") + strlen(result) + 1;
+  firstBuffer = (char *)malloc(firstSize);
+  strcpy(firstBuffer, result);
+  strcat(firstBuffer, ": ");
+  result = firstBuffer;
+
+  firstSize = strlen(msg) + strlen(result) + 1;
+  firstBuffer = (char *)malloc(firstSize);
+  strcpy(firstBuffer, result);
+  strcat(firstBuffer, msg);
+  result = firstBuffer;
 
   return result;
 }
@@ -244,6 +274,7 @@ int main(int argc, char **argv)
       {
         char data[5000];
         recv(i, data, 5000, 0);
+
         if (data[0] == '/') // is a command
         {
           if (!strcmp(data, "/quit")) // quit command
@@ -287,11 +318,12 @@ int main(int argc, char **argv)
             if (userExist(getUsers(), tempUser)) // user in list
             {
               keyTarget = getKey(tempUser);
-              send(keyTarget, msg, 5000, 0);
+              char *result = appendmsg(msg, i);
+              send(keyTarget, result, 5000, 0);
             }
             else
             {
-              printf("User doesn't exist\n");
+              send(i, "User is not connected.\n", 24, 0);
             }
           }
           else if (!strncmp(data, "/all ", 5)) // list command
@@ -307,8 +339,9 @@ int main(int argc, char **argv)
               if (hashArray[k] != NULL)
               {
                 int tempKey = hashArray[k]->key;
+                char *result = appendmsg(msg, i);
                 if (tempKey != i)
-                  send(tempKey, msg, 5000, 0);
+                  send(tempKey, result, 5000, 0);
               }
             }
           }
@@ -316,11 +349,11 @@ int main(int argc, char **argv)
           {
             if (hashArray[i]->admin) // is admin
             {
-              send(i, "ye", 3, 0);
+              send(i, "admin: ye", 10, 0);
             }
             else // is not admin
             {
-              send(i, "no", 3, 0);
+              send(i, "admin: no", 10, 0);
             }
           }
           else if (!strncmp(data, "/makeadmin", 10)) // set admin true for i
@@ -337,7 +370,7 @@ int main(int argc, char **argv)
               strcpy(userTarget, &data[6]);
               if (userExist(getUsers(), userTarget)) // user in list
               {
-                printf("%s Disconnected.\n", userTarget);
+                printf("%s disconnected.\n", userTarget);
                 keyTarget = getKey(userTarget);
                 send(keyTarget, "/quit", 6, 0);
               }
@@ -375,18 +408,16 @@ int main(int argc, char **argv)
                   break;
                 }
               }
-              printf("%d\n", spaceAt);
               char *tempUser = strtok(userTarget, " ");
               strcpy(newUser, &userTarget[spaceAt + 1]);
               if (userExist(getUsers(), tempUser)) // user in list
               {
                 keyTarget = getKey(tempUser);
-                printf("newUser (should be regina): $%s$\n", newUser);
                 strcpy(hashArray[keyTarget]->username, newUser);
               }
               else
               {
-                printf("User doesn't exist\n");
+                send(i, "User is not connected.\n", 24, 0);
               }
             }
             else // user is not admin
@@ -396,7 +427,6 @@ int main(int argc, char **argv)
           }
           else
           {
-            // printf("Got from %d client: %s\n", i, data);
           }
         }
         else // is a username
