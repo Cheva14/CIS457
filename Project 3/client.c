@@ -53,8 +53,7 @@ int rsa_decrypt(unsigned char* in, size_t inlen, EVP_PKEY *key, unsigned char* o
   return outlen;
 }
 
-int encrypt(unsigned char *plaintext, int plaintext_len, unsigned char *key,
-	unsigned char *iv, unsigned char *ciphertext){
+int encrypt(unsigned char *plaintext, int plaintext_len, unsigned char *key, unsigned char *iv, unsigned char *ciphertext){
   EVP_CIPHER_CTX *ctx;
   int len;
   int ciphertext_len;
@@ -70,8 +69,7 @@ int encrypt(unsigned char *plaintext, int plaintext_len, unsigned char *key,
   return ciphertext_len;
 }
 
-int decrypt(unsigned char *ciphertext, int ciphertext_len, unsigned char *key,
-	    unsigned char *iv, unsigned char *plaintext){
+int decrypt(unsigned char *ciphertext, int ciphertext_len, unsigned char *key, unsigned char *iv, unsigned char *plaintext){
   EVP_CIPHER_CTX *ctx;
   int len;
   int plaintext_len;
