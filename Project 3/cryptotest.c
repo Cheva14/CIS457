@@ -88,8 +88,7 @@ int main(void){
   unsigned char *privfilename = "RSApriv.pem";
   unsigned char key[32];
   unsigned char iv[16];
-  unsigned char *plaintext =
-    (unsigned char *)"This is a test string to encrypt.";
+  unsigned char *plaintext = (unsigned char *)"This is a test string to encrypt.";
   unsigned char ciphertext[1024];
   unsigned char decryptedtext[1024];
   int decryptedtext_len, ciphertext_len;

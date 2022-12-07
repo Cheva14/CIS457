@@ -6,14 +6,95 @@
 #include <unistd.h>
 #include <stdlib.h>
 #include <stdbool.h>
+#include <openssl/conf.h>
+#include <openssl/evp.h>
+#include <openssl/err.h>
+#include <openssl/pem.h>
+#include <openssl/rand.h>
+#include <openssl/rsa.h>
 
 #define SIZE 20 // How many clients can join
+
+void handleErrors(void)
+{
+  ERR_print_errors_fp(stderr);
+  abort();
+}
+
+int rsa_encrypt(unsigned char* in, size_t inlen, EVP_PKEY *key, unsigned char* out){ 
+  EVP_PKEY_CTX *ctx;
+  size_t outlen;
+  ctx = EVP_PKEY_CTX_new(key, NULL);
+  if (!ctx)
+    handleErrors();
+  if (EVP_PKEY_encrypt_init(ctx) <= 0)
+    handleErrors();
+  if (EVP_PKEY_CTX_set_rsa_padding(ctx, RSA_PKCS1_OAEP_PADDING) <= 0)
+    handleErrors();
+  if (EVP_PKEY_encrypt(ctx, NULL, &outlen, in, inlen) <= 0)
+    handleErrors();
+  if (EVP_PKEY_encrypt(ctx, out, &outlen, in, inlen) <= 0)
+    handleErrors();
+  return outlen;
+}
+
+int rsa_decrypt(unsigned char* in, size_t inlen, EVP_PKEY *key, unsigned char* out){ 
+  EVP_PKEY_CTX *ctx;
+  size_t outlen;
+  ctx = EVP_PKEY_CTX_new(key,NULL);
+  if (!ctx)
+    handleErrors();
+  if (EVP_PKEY_decrypt_init(ctx) <= 0)
+    handleErrors();
+  if (EVP_PKEY_CTX_set_rsa_padding(ctx, RSA_PKCS1_OAEP_PADDING) <= 0)
+    handleErrors();
+  if (EVP_PKEY_decrypt(ctx, NULL, &outlen, in, inlen) <= 0)
+    handleErrors();
+  if (EVP_PKEY_decrypt(ctx, out, &outlen, in, inlen) <= 0)
+    handleErrors();
+  return outlen;
+}
+
+int encrypt(unsigned char *plaintext, int plaintext_len, unsigned char *key,
+	unsigned char *iv, unsigned char *ciphertext){
+  EVP_CIPHER_CTX *ctx;
+  int len;
+  int ciphertext_len;
+  if(!(ctx = EVP_CIPHER_CTX_new())) handleErrors();
+  if(1 != EVP_EncryptInit_ex(ctx, EVP_aes_256_cbc(), NULL, key, iv))
+    handleErrors();
+  if(1 != EVP_EncryptUpdate(ctx, ciphertext, &len, plaintext, plaintext_len))
+    handleErrors();
+  ciphertext_len = len;
+  if(1 != EVP_EncryptFinal_ex(ctx, ciphertext + len, &len)) handleErrors();
+  ciphertext_len += len;
+  EVP_CIPHER_CTX_free(ctx);
+  return ciphertext_len;
+}
+
+int decrypt(unsigned char *ciphertext, int ciphertext_len, unsigned char *key,
+	    unsigned char *iv, unsigned char *plaintext){
+  EVP_CIPHER_CTX *ctx;
+  int len;
+  int plaintext_len;
+  if(!(ctx = EVP_CIPHER_CTX_new())) handleErrors();
+  if(1 != EVP_DecryptInit_ex(ctx, EVP_aes_256_cbc(), NULL, key, iv))
+    handleErrors();
+  if(1 != EVP_DecryptUpdate(ctx, plaintext, &len, ciphertext, ciphertext_len))
+    handleErrors();
+  plaintext_len = len;
+  if(1 != EVP_DecryptFinal_ex(ctx, plaintext + len, &len)) handleErrors();
+  plaintext_len += len;
+  EVP_CIPHER_CTX_free(ctx);
+  return plaintext_len;
+}
 
 struct DataItem
 {
   int key;
   char username[16];
   bool admin;
+  unsigned char symKey[32];
 };
 
 struct DataItem *hashArray[SIZE];
@@ -88,11 +169,12 @@ bool isAdmin(int key)
   return false;
 }
 
-void insert(int key, char username[16])
+void insert(int key, char username[16], unsigned char symKey[32])
 {
   struct DataItem *item = (struct DataItem *)malloc(sizeof(struct DataItem));
   strcpy(item->username, username);
   item->key = key;
+  strcpy(item->symKey, symKey);
   item->admin = false;
 
   // get the hash
@@ -228,6 +310,13 @@ char *appendmsg(char *msg, int key)
 
 int main(int argc, char **argv)
 {
+
+  unsigned char *privfilename = "RSApriv.pem";
+  OpenSSL_add_all_algorithms();
+  EVP_PKEY *privkey;
+  FILE* privf = fopen(privfilename,"rb");
+  privkey = PEM_read_PrivateKey(privf,NULL,NULL,NULL);
+
   int sockfd = socket(AF_INET, SOCK_STREAM, 0);
   if (sockfd < 0)
   {
@@ -275,9 +364,22 @@ int main(int argc, char **argv)
         char data[5000];
         recv(i, data, 5000, 0);
 
-        if (data[0] == '/') // is a command
+        if (data[0] == '1') // is a command
         {
-          if (!strcmp(data, "/quit")) // quit command
+          unsigned char iv[16];
+          unsigned char ciphertext[1024], decryptedtext[1024];
+          int decryptedtext_len, ciphertext_len;
+          memcpy(iv,&data[1],16);
+          char templen[4];
+          memcpy(templen, &data[18],4);
+          ciphertext_len = atoi(templen);
+          memcpy(ciphertext,&data[23],ciphertext_len);
+          decryptedtext_len = decrypt(ciphertext, ciphertext_len, hashArray[i]->symKey, iv, decryptedtext);
+          decryptedtext[decryptedtext_len] = '\0';
+          EVP_cleanup();
+          ERR_free_strings();
+          //printf("got from server: %s\n",decryptedtext);
+          if (!strcmp(decryptedtext, "/quit")) // quit command
           {
             item = search(i);
             printf("%s has left the server.\n", item->username);
@@ -285,26 +387,34 @@ int main(int argc, char **argv)
             FD_CLR(i, &sockets);
             close(i);
           }
-          else if (!strcmp(data, "/list")) // list command
+          else if (!strcmp(decryptedtext, "/list")) // list command
           {
             char *list = getUsers();
-            send(i, list, strlen(list) + 1, 0);
+            char yourCharArray[4];
+            char sendThisCipher[5000];
+            RAND_bytes(iv,16);
+            memcpy(sendThisCipher,iv,16);
+            ciphertext_len = encrypt (list, strlen ((char *)list), hashArray[i]->symKey, iv, ciphertext);
+            sprintf(yourCharArray,"%d", ciphertext_len);
+            memcpy(&sendThisCipher[17],yourCharArray,4);
+            memcpy(&sendThisCipher[22],ciphertext,ciphertext_len);
+            send(i, sendThisCipher, 5000, 0);
           }
-          else if (!strncmp(data, "/msg ", 5)) // list command
+          else if (!strncmp(decryptedtext, "/msg ", 5)) // list command
           {
             int spaceAt;
             char userTarget[500];
             int keyTarget;
             char msg[5000];
-            for (int k = 5; k < strlen(data); k++)
+            for (int k = 5; k < strlen(decryptedtext); k++)
             {
-              if (data[k] == ' ')
+              if (decryptedtext[k] == ' ')
               {
                 spaceAt = k;
                 break;
               }
             }
-            strcpy(userTarget, &data[5]);
+            strcpy(userTarget, &decryptedtext[5]);
             for (int k = 0; k < strlen(userTarget); k++)
             {
               if (userTarget[k] == ' ')
@@ -319,19 +429,34 @@ int main(int argc, char **argv)
             {
               keyTarget = getKey(tempUser);
               char *result = appendmsg(msg, i);
-              send(keyTarget, result, 5000, 0);
+              char yourCharArray[4];
+              char sendThisCipher[5000];
+              RAND_bytes(iv,16);
+              memcpy(sendThisCipher,iv,16);
+              ciphertext_len = encrypt (result, strlen ((char *)result), hashArray[keyTarget]->symKey, iv, ciphertext);
+              sprintf(yourCharArray,"%d", ciphertext_len);
+              memcpy(&sendThisCipher[17],yourCharArray,4);
+              memcpy(&sendThisCipher[22],ciphertext,ciphertext_len);
+              send(keyTarget, sendThisCipher, 5000, 0);
             }
             else
             {
-              send(i, "User is not connected.\n", 24, 0);
+              char yourCharArray[4];
+              char sendThisCipher[5000];
+              RAND_bytes(iv,16);
+              memcpy(sendThisCipher,iv,16);
+              ciphertext_len = encrypt ("User is not connected.\n", 24, hashArray[i]->symKey, iv, ciphertext);
+              sprintf(yourCharArray,"%d", ciphertext_len);
+              memcpy(&sendThisCipher[17],yourCharArray,4);
+              memcpy(&sendThisCipher[22],ciphertext,ciphertext_len);
+              send(i, sendThisCipher, 5000, 0);
             }
           }
-          else if (!strncmp(data, "/all ", 5)) // list command
+          else if (!strncmp(decryptedtext, "/all ", 5)) // list command
           {
             char msg[5000]; // at data[5] to end
-            strcpy(msg, &data[5]);
+            strcpy(msg, &decryptedtext[5]);
 
-            // send(all, msg, 5000, 0);
             int k = 0;
 
             for (k = 0; k < SIZE; k++)
@@ -341,38 +466,71 @@ int main(int argc, char **argv)
                 int tempKey = hashArray[k]->key;
                 char *result = appendmsg(msg, i);
                 if (tempKey != i)
-                  send(tempKey, result, 5000, 0);
+                {
+                  char yourCharArray[4];
+                  char sendThisCipher[5000];
+                  RAND_bytes(iv,16);
+                  memcpy(sendThisCipher,iv,16);
+                  ciphertext_len = encrypt (result, strlen ((char *)result), hashArray[tempKey]->symKey, iv, ciphertext);
+                  sprintf(yourCharArray,"%d", ciphertext_len);
+                  memcpy(&sendThisCipher[17],yourCharArray,4);
+                  memcpy(&sendThisCipher[22],ciphertext,ciphertext_len);
+                  send(tempKey, sendThisCipher, 5000, 0);
+                }
               }
             }
           }
-          else if (!strncmp(data, "/admin", 6))
+          else if (!strncmp(decryptedtext, "/admin", 6))
           {
             if (hashArray[i]->admin) // is admin
             {
-              send(i, "admin: ye", 10, 0);
+              char yourCharArray[4];
+              char sendThisCipher[5000];
+              RAND_bytes(iv,16);
+              memcpy(sendThisCipher,iv,16);
+              ciphertext_len = encrypt ("admin: ye", 10, hashArray[i]->symKey, iv, ciphertext);
+              sprintf(yourCharArray,"%d", ciphertext_len);
+              memcpy(&sendThisCipher[17],yourCharArray,4);
+              memcpy(&sendThisCipher[22],ciphertext,ciphertext_len);
+              send(i, sendThisCipher, 5000, 0);
             }
             else // is not admin
             {
-              send(i, "admin: no", 10, 0);
+              char yourCharArray[4];
+              char sendThisCipher[5000];
+              RAND_bytes(iv,16);
+              memcpy(sendThisCipher,iv,16);
+              ciphertext_len = encrypt ("admin: no", 10, hashArray[i]->symKey, iv, ciphertext);
+              sprintf(yourCharArray,"%d", ciphertext_len);
+              memcpy(&sendThisCipher[17],yourCharArray,4);
+              memcpy(&sendThisCipher[22],ciphertext,ciphertext_len);
+              send(i, sendThisCipher, 5000, 0);
             }
           }
-          else if (!strncmp(data, "/makeadmin", 10)) // set admin true for i
+          else if (!strncmp(decryptedtext, "/makeadmin", 10)) // set admin true for i
           {
             makeAdmin(i);
           }
-
-          else if (!strncmp(data, "/kick ", 6))
+          else if (!strncmp(decryptedtext, "/kick ", 6))
           {
             if (hashArray[i]->admin) // user is admin
             {
               char userTarget[16]; // at data[6] to data[spaceAt]
               int keyTarget;
-              strcpy(userTarget, &data[6]);
+              strcpy(userTarget, &decryptedtext[6]);
               if (userExist(getUsers(), userTarget)) // user in list
               {
-                printf("%s disconnected.\n", userTarget);
                 keyTarget = getKey(userTarget);
-                send(keyTarget, "/quit", 6, 0);
+
+                char yourCharArray[4];
+                char sendThisCipher[5000];
+                RAND_bytes(iv,16);
+                memcpy(sendThisCipher,iv,16);
+                ciphertext_len = encrypt ("/quit", 6, hashArray[keyTarget]->symKey, iv, ciphertext);
+                sprintf(yourCharArray,"%d", ciphertext_len);
+                memcpy(&sendThisCipher[17],yourCharArray,4);
+                memcpy(&sendThisCipher[22],ciphertext,ciphertext_len);
+                send(keyTarget, sendThisCipher, 5000, 0);
               }
               else
               {
@@ -383,7 +541,7 @@ int main(int argc, char **argv)
               // nothing
             }
           }
-          else if (!strncmp(data, "/rename ", 8))
+          else if (!strncmp(decryptedtext, "/rename ", 8))
           {
             if (hashArray[i]->admin) // user is admin
             {
@@ -391,15 +549,15 @@ int main(int argc, char **argv)
               char userTarget[500];
               int keyTarget;
               char newUser[5000];
-              for (int k = 8; k < strlen(data); k++)
+              for (int k = 8; k < strlen(decryptedtext); k++)
               {
-                if (data[k] == ' ')
+                if (decryptedtext[k] == ' ')
                 {
                   spaceAt = k;
                   break;
                 }
               }
-              strcpy(userTarget, &data[8]);
+              strcpy(userTarget, &decryptedtext[8]);
               for (int k = 0; k < strlen(userTarget); k++)
               {
                 if (userTarget[k] == ' ')
@@ -417,7 +575,16 @@ int main(int argc, char **argv)
               }
               else
               {
-                send(i, "User is not connected.\n", 24, 0);
+
+                char yourCharArray[4];
+                char sendThisCipher[5000];
+                RAND_bytes(iv,16);
+                memcpy(sendThisCipher,iv,16);
+                ciphertext_len = encrypt ("User is not connected.\n", 24, hashArray[i]->symKey, iv, ciphertext);
+                sprintf(yourCharArray,"%d", ciphertext_len);
+                memcpy(&sendThisCipher[17],yourCharArray,4);
+                memcpy(&sendThisCipher[22],ciphertext,ciphertext_len);
+                send(i, sendThisCipher, 5000, 0);
               }
             }
             else // user is not admin
@@ -429,10 +596,15 @@ int main(int argc, char **argv)
           {
           }
         }
-        else // is a username
+        else  if (data[0] == '0') // is a username
         {
-          printf("%s has joined the server.\n", data);
-          insert(i, data);
+          unsigned char decrypted_key[32];
+          unsigned char encrypted_key[256];
+          int decryptedkey_len;
+          memcpy(encrypted_key,&data[1],256);
+          decryptedkey_len = rsa_decrypt(encrypted_key, 256, privkey, decrypted_key); 
+          insert(i, &data[258], decrypted_key);
+          printf("%s has joined the server.\n", hashArray[i]->username);
         }
       }
     }
