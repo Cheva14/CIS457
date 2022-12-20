@@ -4,7 +4,7 @@ In this project, I wrote a server and client of a chat program in C. I used TCP 
 
 ## Documentation
 
-To run in linux, type make in the terminal in the directory with all the files
+To compile files, type this in the terminal in the directory with all the files.
 
 ```
 $ make
